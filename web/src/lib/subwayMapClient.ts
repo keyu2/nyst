@@ -207,7 +207,7 @@ export async function createSubwayMap({
   });
   map.addSource("subway-station-labels", {
     type: "geojson",
-    data: { type: "FeatureCollection", features: stationFeatures(mapStationLabels(stations)) },
+    data: { type: "FeatureCollection", features: stationFeatures(mapStationLabels(stations, map)) },
   });
   map.addLayer({
     id: "subway-stations",
@@ -431,7 +431,7 @@ function refreshMapGeometry(map: SubwayMap) {
   const vehicles = placeMapVehicles(visibleMapItems(map, data.vehicles), lines);
   map.getSource<GeoJSONSource>("subway-lines")?.setData({type:"FeatureCollection",features:lines});
   map.getSource<GeoJSONSource>("subway-station-connections")?.setData({type:"FeatureCollection",features:mapStationConnections(map,stations)});
-  map.getSource<GeoJSONSource>("subway-station-labels")?.setData({type:"FeatureCollection",features:stationFeatures(mapStationLabels(stations))});
+  map.getSource<GeoJSONSource>("subway-station-labels")?.setData({type:"FeatureCollection",features:stationFeatures(mapStationLabels(stations, map))});
   map.getSource<GeoJSONSource>("subway-stations")?.setData({type:"FeatureCollection",features:stationFeatures(stations)});
   map.getSource<GeoJSONSource>("subway-vehicles")?.setData({type:"FeatureCollection",features:vehicleFeatures(map,vehicles)});
 }

@@ -13,7 +13,7 @@ type ConnectionFeature = {type: "Feature"; properties: {id: string}; geometry: {
 const SERVICE_ORDER = ["R", "M", "F", "E", "A", "C", "B", "D", "N", "Q", "W", "G", "J", "Z", "L", "1", "2", "3", "4", "5", "6", "7", "GS", "FS", "H", "SI"];
 const ROUTE_FAMILIES: Record<string, string> = { "6X": "6", "7X": "7", FX: "F", SIX: "SI" };
 const CELL = 0.002;
-const SHARED_DISTANCE = 45;
+const SHARED_DISTANCE = 2;
 const LANE_SPACING = 8;
 const segmentIndexes = new WeakMap<MapFeature[], SegmentIndex>();
 let cachedKey = "";
@@ -90,7 +90,7 @@ function sharedRoutes(index: SegmentIndex, point: MapCoordinate, directions: Pro
   const matches = new Map<string, Projection & {pathIndex: number}>();
   for (const segment of nearbySegments(index, point)) {
     const match = project(point, segment.start, segment.end);
-    if (match.distance > SHARED_DISTANCE || (!supportedPaths.has(segment.pathIndex) && match.distance > 2)) continue;
+    if (match.distance > SHARED_DISTANCE || !supportedPaths.has(segment.pathIndex)) continue;
     const alignment = Math.max(...directions.map((direction) => Math.abs(direction.dx * match.dx + direction.dy * match.dy)
       / (Math.hypot(direction.dx, direction.dy) * Math.hypot(match.dx, match.dy)) || 0));
     if (alignment < 0.94 || !Number.isFinite(alignment)) continue;
@@ -157,41 +157,81 @@ export function layoutMapCorridors(lines: CorridorInput[]): MapFeature[] {
   paths.sort((a, b) => serviceOrder(a.properties.routeId, b.properties.routeId)
     || b.geometry.coordinates.length - a.geometry.coordinates.length);
   const index = segmentIndex(paths);
-  cachedLines = paths.map((line) => {
-    const path = samplePath(line.geometry.coordinates);
-    const laneOffsets: number[] = [];
-    const coordinates = path.map((point, position) => {
+  const sampled = paths.map((line) => samplePath(line.geometry.coordinates));
+  const neighbors = paths.map(() => new Map<number, {count: number; orientation: number}>());
+  for (const [pathIndex, path] of sampled.entries()) {
+    for (let position = 0; position < path.length; position++) {
+      const point = path[position];
+      const direction = project(point, path[Math.max(0, position - 1)], path[Math.min(path.length - 1, position + 1)]);
+      const matches = new Map<number, {distance: number; orientation: number}>();
+      for (const segment of nearbySegments(index, point)) {
+        if (segment.pathIndex === pathIndex) continue;
+        const match = project(point, segment.start, segment.end);
+        if (match.distance > SHARED_DISTANCE) continue;
+        const dot = direction.dx * match.dx + direction.dy * match.dy;
+        const alignment = dot / (Math.hypot(direction.dx, direction.dy) * Math.hypot(match.dx, match.dy));
+        if (Math.abs(alignment) < 0.94 || !Number.isFinite(alignment)) continue;
+        if (match.distance >= (matches.get(segment.pathIndex)?.distance ?? Infinity)) continue;
+        matches.set(segment.pathIndex, {distance: match.distance, orientation: Math.sign(alignment)});
+      }
+      for (const [other, match] of matches) {
+        const previous = neighbors[pathIndex].get(other) || {count: 0, orientation: 0};
+        neighbors[pathIndex].set(other, {count: previous.count + 1, orientation: previous.orientation + match.orientation});
+      }
+    }
+  }
+  const conflicts = new Map<string, Set<string>>();
+  const connections = paths.map(() => new Map<number, number>());
+  for (const [pathIndex, matches] of neighbors.entries()) {
+    const route = paths[pathIndex].properties.routeId;
+    if (!conflicts.has(route)) conflicts.set(route, new Set());
+    for (const [other, match] of matches) {
+      if (match.count < 3) continue;
+      const otherRoute = paths[other].properties.routeId;
+      connections[pathIndex].set(other, Math.sign(match.orientation) || 1);
+      connections[other].set(pathIndex, Math.sign(match.orientation) || 1);
+      if (route === otherRoute) continue;
+      conflicts.get(route)!.add(otherRoute);
+      if (!conflicts.has(otherRoute)) conflicts.set(otherRoute, new Set());
+      conflicts.get(otherRoute)!.add(route);
+    }
+  }
+  const slots = new Map<string, number>();
+  for (const route of [...conflicts.keys()].sort(serviceOrder)) {
+    const occupied = new Set([...conflicts.get(route)!].map((other) => slots.get(other)));
+    let slot = 0;
+    while (occupied.has(slot)) slot++;
+    slots.set(route, slot);
+  }
+  const offsets = new Map<string, number>();
+  for (const route of slots.keys()) {
+    if (offsets.has(route)) continue;
+    const component = new Set([route]);
+    for (const current of component) for (const neighbor of conflicts.get(current) || []) component.add(neighbor);
+    const middle = Math.max(...[...component].map((id) => slots.get(id)!)) / 2;
+    for (const id of component) offsets.set(id, (slots.get(id)! - middle) * LANE_SPACING);
+  }
+  const orientations = new Map<number, number>();
+  for (const pathIndex of paths.keys()) {
+    if (orientations.has(pathIndex)) continue;
+    orientations.set(pathIndex, 1);
+    const pending = [pathIndex];
+    for (const current of pending) for (const [other, direction] of connections[current]) {
+      if (orientations.has(other)) continue;
+      orientations.set(other, orientations.get(current)! * direction);
+      pending.push(other);
+    }
+  }
+  cachedLines = paths.map((line, pathIndex) => {
+    const offset = offsets.get(line.properties.routeId)! * orientations.get(pathIndex)!;
+    const coordinates = sampled[pathIndex].map((point, position, path) => {
       const start = path[Math.max(0, position - 1)], end = path[Math.min(path.length - 1, position + 1)];
-      const direction = project(point, start, end);
-      const directions = [direction, project(point, start, point), project(point, point, end)];
-      const supportedPaths = new Set<number>();
-      for (const support of [path[Math.max(0, position - 3)], path[Math.min(path.length - 1, position + 3)]]) {
-        if (project(point, support, support).distance < 100) continue;
-        for (const segment of nearbySegments(index, support)) {
-          if (project(support, segment.start, segment.end).distance <= SHARED_DISTANCE) supportedPaths.add(segment.pathIndex);
-        }
-      }
-      let center = point;
-      let matches = sharedRoutes(index, center, directions, supportedPaths);
-      let leader = line.properties.routeId;
-      for (let pass = 0; pass < 3; pass++) {
-        const first = [...matches.keys(), line.properties.routeId].sort(serviceOrder)[0];
-        if (first === leader) {
-          center = matches.get(first)?.coordinate || center;
-          break;
-        }
-        leader = first;
-        center = matches.get(leader)!.coordinate;
-        matches = sharedRoutes(index, center, directions, supportedPaths);
-      }
-      const services = [...new Set([...matches.keys(), line.properties.routeId])].sort(serviceOrder);
-      const reference = matches.get(services[0]) || direction;
-      const orientation = direction.dx * reference.dx + direction.dy * reference.dy < 0 ? -1 : 1;
-      laneOffsets.push((services.indexOf(line.properties.routeId) - (services.length - 1) / 2) * LANE_SPACING * orientation);
-      return center;
+      const directions = [project(point, start, end), project(point, start, point), project(point, point, end)];
+      const matches = sharedRoutes(index, point, directions, new Set(connections[pathIndex].keys()));
+      const reference = [...matches.entries()].sort(([left], [right]) => serviceOrder(left, right))[0];
+      return reference && serviceOrder(reference[0], line.properties.routeId) < 0 ? reference[1].coordinate : point;
     });
-    const offset = laneOffsets.every((value) => value === laneOffsets[0]) ? laneOffsets[0] : 0;
-    return { ...line, properties: { ...line.properties, offset, laneOffsets }, geometry: { type: "LineString", coordinates } };
+    return {...line, properties: {...line.properties, offset, laneOffsets: coordinates.map(() => offset)}, geometry: {type: "LineString", coordinates}};
   });
   cachedKey = key;
   return cachedLines;
@@ -349,14 +389,31 @@ export function placeMapStations<T extends MapStation>(stations: T[], lines: Map
   });
 }
 
-export function mapStationLabels<T extends MapStation>(stations: T[]): T[] {
+export function mapStationLabels<T extends MapStation>(stations: T[], map?: ProjectionMap): T[] {
   const groups = new Map<string, T[]>();
   for (const station of stations) {
     const group = groups.get(station.id) || [];
     group.push(station);
     groups.set(station.id, group);
   }
-  return [...groups.values()].map((group) => ({
+  const platforms: T[][] = [];
+  for (const group of groups.values()) {
+    const remaining = new Set(group);
+    while (remaining.size) {
+      const first = remaining.values().next().value!;
+      const platform = [first];
+      remaining.delete(first);
+      for (const station of platform) for (const other of remaining) {
+        const start = map?.project([station.longitude, station.latitude]);
+        const end = map?.project([other.longitude, other.latitude]);
+        if (start && end && Math.hypot(start.x - end.x, start.y - end.y) > 20) continue;
+        platform.push(other);
+        remaining.delete(other);
+      }
+      platforms.push(platform);
+    }
+  }
+  return platforms.map((group) => ({
     ...group[0],
     longitude: group.reduce((sum, station) => sum + station.longitude, 0) / group.length,
     latitude: group.reduce((sum, station) => sum + station.latitude, 0) / group.length,

@@ -25,12 +25,12 @@ test("a lone service is centered and opposite directions share its lane", () => 
   assert.equal(result[0].properties.offset, 0);
 });
 
-test("shared services with different source coordinates still render in equally spaced lanes", () => {
+test("nearly identical shared track geometry renders in equally spaced lanes", () => {
   const result = layoutMapCorridors([
     feature("R", [[-74, 40.7], [-73.99, 40.7]]),
-    feature("M", [[-74, 40.6998], [-73.995, 40.6998], [-73.99, 40.6998]]),
-    feature("F", [[-74, 40.7002], [-73.99, 40.7002]]),
-    feature("E", [[-73.99, 40.7001], [-74, 40.7001]]),
+    feature("M", [[-74, 40.699995], [-73.995, 40.699995], [-73.99, 40.699995]]),
+    feature("F", [[-74, 40.700005], [-73.99, 40.700005]]),
+    feature("E", [[-73.99, 40.700004], [-74, 40.700004]]),
   ]);
   const rendered = renderMapCorridors(map, result);
   const points = ["R", "M", "F", "E"].map((id) => projectedVehicle(id, rendered));
@@ -67,13 +67,16 @@ test("crossing services do not become a shared corridor", () => {
   assert.ok(result.every((line) => line.properties.laneOffsets.every((offset) => offset === 0)));
 });
 
-test("sharing a distant corridor does not displace a solo section", () => {
+test("a service retains its lane when another service branches away", () => {
   const lines = layoutMapCorridors([
     feature("G", [[-74, 40.7], [-73.99, 40.7], [-73.98, 40.7]]),
     feature("F", [[-74, 40.7], [-73.995, 40.7], [-73.995, 40.69]]),
   ]);
   const rendered = renderMapCorridors(map, lines);
-  assert.deepEqual(rendered.find((line) => line.properties.routeId === "G").geometry.coordinates.at(-1), [-73.98, 40.7]);
+  const through = lines.find((line) => line.properties.routeId === "G");
+  assert.ok(through.properties.laneOffsets.every((offset) => offset === through.properties.offset));
+  assert.deepEqual(through.geometry.coordinates.at(-1), [-73.98, 40.7]);
+  assert.equal(rendered.find((line) => line.properties.routeId === "G").geometry.coordinates.at(-1)[0], -73.98);
 });
 
 test("every served route gets a station dot on its own lane with a single station label", () => {
@@ -121,7 +124,7 @@ test("connected station dots remain attached to their service lanes after zoom a
 
 test("brief parallel approaches do not pull a through service into a false shared corridor", () => {
   const lines = layoutMapCorridors([
-    feature("R", [[-73.9953, 40.7002], [-73.9947, 40.7002]]),
+    feature("R", [[-73.9953, 40.700005], [-73.9947, 40.700005]]),
     feature("F", [[-74, 40.7], [-73.99, 40.7]]),
   ]);
   const through = lines.find((line) => line.properties.routeId === "F");
@@ -153,4 +156,38 @@ test("station dots follow existing active service instead of adding regular expr
   const station = {id: "one", name: "Test", longitude: -73.995, latitude: 40.7, routeIds: ["R", "F", "E"], activeRouteIds: ["R"]};
   assert.deepEqual(placeMapStations([station], lines).map((point) => point.routeId), ["R"]);
   assert.deepEqual(placeMapStations([{...station, activeRouteIds: []}], lines), []);
+});
+
+
+test("nearby parallel routes on separate tracks retain their own alignment", () => {
+  const lines = layoutMapCorridors([
+    feature("1", [[-74, 40.7], [-73.99, 40.7]]),
+    feature("R", [[-74, 40.7002], [-73.99, 40.7002]]),
+  ]);
+  for (const line of lines) {
+    const latitude = line.properties.routeId === "1" ? 40.7 : 40.7002;
+    assert.ok(line.geometry.coordinates.every((point) => Math.abs(point[1] - latitude) < 1e-9));
+    assert.ok(line.properties.laneOffsets.every((offset) => offset === 0));
+  }
+});
+
+test("an approaching Broadway curve cannot borrow the Seventh Avenue alignment", () => {
+  const red = [[-73.987495,40.75529],[-73.986009,40.757342],[-73.985786,40.757638],[-73.985569,40.758014],[-73.98533,40.758631],[-73.984959,40.759714],[-73.984444,40.760821],[-73.983849,40.761728]];
+  const yellow = [[-73.986201,40.75643],[-73.986106,40.756705],[-73.985893,40.757229],[-73.985648,40.757718],[-73.985371,40.758173],[-73.984139,40.759901]];
+  const together = layoutMapCorridors([feature("1", red), feature("R", yellow)]);
+  for (const [route, path] of [["1", red], ["R", yellow]]) {
+    const alone = layoutMapCorridors([feature(route, path)])[0];
+    const combined = together.find((line) => line.properties.routeId === route);
+    assert.deepEqual(combined.geometry.coordinates, alone.geometry.coordinates);
+    assert.ok(combined.properties.laneOffsets.every((offset) => offset === 0));
+  }
+});
+
+
+test("separate platforms in one complex retain their own station labels", () => {
+  const stations = [0, 8, 90, 98].map((x) => ({id: "Times Sq", name: "Times Sq-42 St", longitude: -74 + x / 100000, latitude: 40.7}));
+  const labels = mapStationLabels(stations, map);
+  assert.equal(labels.length, 2);
+  assert.ok(Math.abs(map.project([labels[0].longitude, labels[0].latitude]).x - (-7400000 + 4)) < 0.01);
+  assert.ok(Math.abs(map.project([labels[1].longitude, labels[1].latitude]).x - (-7400000 + 94)) < 0.01);
 });
