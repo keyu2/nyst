@@ -1,0 +1,11 @@
+{
+  "name": "nyst",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "node web/dev.mjs",
+    "build": "npm --prefix web run build && go build -o nyst .",
+    "check": "npm --prefix web run check && npm --prefix web test && go test ./...",
+    "start": "./nyst"
+  }
+}

@@ -1,0 +1,13 @@
+.DS_Store
+.env
+.env.*
+!.env.example
+
+node_modules/
+web/dist/
+web/.svelte-kit/
+.cache/
+.pnpm-store/
+
+nyst
+coverage/

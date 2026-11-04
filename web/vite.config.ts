@@ -1,0 +1,18 @@
+import { defineConfig } from "vite";
+import { sveltekit } from "@sveltejs/kit/vite";
+import adapter from "@sveltejs/adapter-static";
+import { vitePreprocess } from "@sveltejs/vite-plugin-svelte";
+
+export default defineConfig({
+  plugins: [sveltekit({
+    adapter: adapter({ pages: "dist", assets: "dist", fallback: "index.html" }),
+    files: { assets: "public" },
+    preprocess: vitePreprocess(),
+  })],
+  server: {
+    host: true,
+    proxy: {
+      "/api": "http://127.0.0.1:3001",
+    },
+  },
+});
