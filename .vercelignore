@@ -1,0 +1,13 @@
+node_modules/
+web/node_modules/
+web/.svelte-kit/
+web/dist/
+.pnpm-store/
+.vercel/
+tmp/
+nyst
+.env
+.env.*
+.DS_Store
+**/.DS_Store
+!.dockerignore

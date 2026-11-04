@@ -54,6 +54,27 @@ make build
 
 Open <http://localhost:3000>. Production uses the compiled interface and does not watch source files.
 
+## Vercel
+
+The live site is https://nystgo.vercel.app (Vercel project `nyst-lite`).
+
+Deploy the whole repository, including the Go server. Set **Root Directory**
+to the repository root (`.`), not `web`, and choose the **Container** preset.
+Clear any previous install, build and output directory overrides, and remove
+`GO_API_URL` if you added it for the earlier frontend-only setup.
+
+`Dockerfile.vercel` builds the Svelte frontend first, embeds it in the Go
+binary, and runs that server. Pages, API requests and live updates use the
+same domain. There is no separate backend host to configure.
+
+Push the repository to deploy through Vercel's Git integration, or run
+`npx vercel@latest --prod` from the repository root after signing in.
+
+Vercel's container runtime is currently in beta. Idle instances scale down;
+the next request starts a new instance and rebuilds its in-memory caches.
+The service is not an always-running background process. Check live arrivals
+and event-stream reconnections on the deployed URL before relying on it.
+
 ## Verification
 
 ```bash

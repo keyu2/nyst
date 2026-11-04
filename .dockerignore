@@ -1,0 +1,12 @@
+.git
+.DS_Store
+.env
+.env.*
+**/node_modules
+**/.svelte-kit
+web/dist
+.pnpm-store
+.vercel
+tmp
+nyst
+coverage

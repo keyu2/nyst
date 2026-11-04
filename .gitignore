@@ -8,6 +8,9 @@ web/dist/
 web/.svelte-kit/
 .cache/
 .pnpm-store/
+.vercel/
 
 nyst
 coverage/
+.vercel
+.env*
